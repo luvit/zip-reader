@@ -1,40 +1,21 @@
 local ffi = require('ffi')
 local Zlib = require('zlib_native')
 
-local function tobin(bin)
-  local str = '<'
-  for i=1,#bin do
-    str = str .. bit.tohex(string.byte(bin, i),2) .. " "
-  end
-  str = str .. '>'
-  return str
-end
-
--- Given a path like /foo/bar and foo//bar/ return foo/bar.bar
--- This removes leading and trailing slashes as well as multiple internal slashes.
-local function normalizePath(path)
-  local parts = {}
-  for part in string.gmatch(path, "([^/]+)") do
-    table.insert(parts, part)
-  end
-  return table.concat(parts, "/")
-end
-
 ffi.cdef[[
-  struct zip_EOCD {
+  struct zip_LFH {
     uint32_t signature;
-    uint16_t disk_number;
-    uint16_t central_dir_disk_number;
-    uint16_t central_dir_disk_records;
-    uint16_t central_dir_total_records;
-    uint32_t central_dir_size;
-    uint32_t central_dir_offset;
-    uint16_t file_comment_length;
-  } __attribute__ ((packed));
-]]
-local EOCD = ffi.typeof("struct zip_EOCD")
+    uint16_t version_needed;
+    uint16_t flags;
+    uint16_t compression_method;
+    uint16_t last_mod_file_time;
+    uint16_t last_mod_file_date;
+    uint32_t crc_32;
+    uint32_t compressed_size;
+    uint32_t uncompressed_size;
+    uint16_t file_name_length;
+    uint16_t extra_field_length;
+  } __attribute ((packed));
 
-ffi.cdef[[
   struct zip_CDFH {
     uint32_t signature;
     uint16_t version;
@@ -54,28 +35,34 @@ ffi.cdef[[
     uint32_t external_file_attributes;
     uint32_t local_file_header_offset;
   } __attribute__ ((packed));
-]]
-local CDFH = ffi.typeof("struct zip_CDFH")
 
-ffi.cdef[[
-  struct zip_LFH {
+  struct zip_EoCD {
     uint32_t signature;
-    uint16_t version_needed;
-    uint16_t flags;
-    uint16_t compression_method;
-    uint16_t last_mod_file_time;
-    uint16_t last_mod_file_date;
-    uint32_t crc_32;
-    uint32_t compressed_size;
-    uint32_t uncompressed_size;
-    uint16_t file_name_length;
-    uint16_t extra_field_length;
-  } __attribute ((packed));
+    uint16_t disk_number;
+    uint16_t central_dir_disk_number;
+    uint16_t central_dir_disk_records;
+    uint16_t central_dir_total_records;
+    uint32_t central_dir_size;
+    uint32_t central_dir_offset;
+    uint16_t file_comment_length;
+  } __attribute__ ((packed));
 ]]
+-- Local File Header
 local LFH = ffi.typeof("struct zip_LFH")
+-- Central Directory File Header
+local CDFH = ffi.typeof("struct zip_CDFH")
+-- End of Central Directory
+local EoCD = ffi.typeof("struct zip_EoCD")
 
-
-
+-- Given a path like /foo/bar and foo//bar/ return foo/bar.bar
+-- This removes leading and trailing slashes as well as multiple internal slashes.
+local function normalizePath(path)
+  local parts = {}
+  for part in string.gmatch(path, "([^/]+)") do
+    table.insert(parts, part)
+  end
+  return table.concat(parts, "/")
+end
 
 -- Please provide with I/O functions.
 -- fsFstat(fd) takes a fd and returns a table with a .size property for file length
@@ -86,8 +73,8 @@ return function (fd, fs)
   local cd = {}
 
   -- Scan from the end of a file to find the start position of
-  -- the EOCD (end of central directory) entry.
-  local function findEOCD()
+  -- the EoCD (end of central directory) entry.
+  local function findEoCD()
     local stat = fs.fstat(fd)
 
     -- Theoretically, the comment at the end can be 0x10000 bytes long
@@ -97,7 +84,7 @@ return function (fd, fs)
     local tail = fs.read(fd, maxSize, start)
     local position = #tail
 
-    -- Scan backwards looking for the EOCD signature 0x06054b50
+    -- Scan backwards looking for the EoCD signature 0x06054b50
     while position > 0 do
       if string.byte(tail, position) == 0x06 and
          string.byte(tail, position - 1) == 0x05 and
@@ -107,19 +94,18 @@ return function (fd, fs)
       end
       position = position - 1
     end
-    error "Not a zip file"
   end
 
-  -- Once you know the EOCD position, you can read and parse it.
-  local function readEOCD(position)
-    local eocd = EOCD()
+  -- Once you know the EoCD position, you can read and parse it.
+  local function readEoCD(position)
+    local eocd = EoCD()
     local size = ffi.sizeof(eocd)
     local data = fs.read(fd, size, position)
 
     ffi.copy(eocd, data, size)
 
     if eocd.signature ~= 0x06054b50 then
-      error "Invalid EOCD position"
+      error "Invalid EoCD position"
     end
     local comment = fs.read(fd, eocd.file_comment_length, position + size)
 
@@ -199,11 +185,14 @@ return function (fd, fs)
     path = normalizePath(path)
     local entry = cd[path]
     if entry then return entry end
-    error("No such entry '" .. path .. "'")
+    return nil, "No such entry '" .. path .. "'"
   end
 
   local function readdir(path)
     path = normalizePath(path)
+    if path and not cd[path] then
+      return nil, "No such directory '" .. path .. "'"
+    end
     local entries = {}
     local pattern
     if #path > 0 then
@@ -223,7 +212,7 @@ return function (fd, fs)
   local function readfile(path)
     path = normalizePath(path)
     local entry = cd[path]
-    if entry == nil then error("No such file '" .. path .. "'") end
+    if entry == nil then return nil, "No such file '" .. path .. "'" end
     local lfh = readLFH(entry.local_file_header_position)
 
     if entry.crc_32 ~= lfh.crc_32 or
@@ -257,8 +246,9 @@ return function (fd, fs)
   end
 
   local function load()
-    local position = findEOCD()
-    local eocd = readEOCD(position)
+    local position = findEoCD()
+    if position == nil then return nil, "Can't find End of Central Directory" end
+    local eocd = readEoCD(position)
     position = position - eocd.central_dir_size
     local start = position - eocd.central_dir_offset
     for i = 1, eocd.central_dir_disk_records do
@@ -267,14 +257,14 @@ return function (fd, fs)
       position = position + cdfh.header_size
     end
 
+    return {
+      stat = stat,
+      readdir = readdir,
+      readfile = readfile,
+    }
+
   end
 
-  load()
-
-  return {
-    stat = stat,
-    readdir = readdir,
-    readfile = readfile,
-  }
+  return load()
 
 end

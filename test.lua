@@ -10,14 +10,21 @@ local fd = fs.open(process.execPath, "r", tonumber("644", 8))
 p{fd=fd}
 
 local function test(zip)
-  p{zip=zip}
-  p{logo=zip.readfile("logo.txt")}
-  p{test=zip.readfile("test.txt")}
-  p{init=zip.readfile("zip/init.lua")}
+  if zip == nil then
+    print("No embedded zip file found")
+    return
+  end
+  local file = zip.readfile("zip.lua")
+  if not file then
+    file = zip.readfile("zip/init.lua")
+  end
+  p{zip=file}
 end
 
+-- blocking I/O.
 test(openZip(fd, fs))
 
--- coroutine.wrap(function ()
---   test(openZip(fd, require('./async-fs')))
--- end)()
+coroutine.wrap(function ()
+  -- Pseudo-blocking.  Only blocks the coroutine, but not the process.
+  test(openZip(fd, require('./async-fs')))
+end)()
