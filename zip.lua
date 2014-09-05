@@ -246,8 +246,7 @@ return function (fd, fs)
       uncompressed = compressed
     -- Inflate
     elseif lfh.compression_method == 8 then
-      local err
-      uncompressed = assert(Zlib.new('inflate'):write(compressed, 'finish'))
+      uncompressed = assert(Zlib.new('inflate',-15):write(compressed, 'finish'))
     else
       error("Unknown compression method: " .. lfh.compression_method)
     end
