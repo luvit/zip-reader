@@ -8,3 +8,6 @@ modules.zip:
 
 combined: luvit modules.zip
 	cat $^ > $@ && chmod +x $@
+
+clean:
+	rm -f luvit modules.zip combined
