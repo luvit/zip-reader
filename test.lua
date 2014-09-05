@@ -2,6 +2,11 @@ local loadZip = require('zip')
 local await = require('await')
 local uv = require('luv')
 
+-- To test, run the Makefile in the current directory. It will zip the modules
+-- folder and combine that with the luvit binary in your path.
+
+-- Once this is done, run this script with `./combined test.lua`
+
 coroutine.wrap(function ()
   local fd = await(uv.fs_open, uv.execpath(), "r", tonumber("644", 8))
   local zip = assert(loadZip(fd))
