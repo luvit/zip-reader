@@ -5,6 +5,10 @@ local uv = require('luv')
 -- To test, run the Makefile in the current directory. It will zip the modules
 -- folder and combine that with the luvit binary in your path.
 
+-- Oh, and the luv.luvit module in this repo is compiled for a macbook, you may
+-- need to replace it if your arch differs.  Or I can use luvit's builtin libuv
+-- bindings instead of depending on the external luv addon.
+
 -- Once this is done, run this script with `./combined test.lua`
 
 coroutine.wrap(function ()
